@@ -37,3 +37,11 @@ def generate(self) -> Iterator[AccessEvent]:
     produced += chunk_size
     self._advance_drift_state(chunk_size)
     
+def to_pdframe(self) -> pd.DataFrame:
+  num_requests = self.config.num_requests
+  timestamp = np.empty(num_requests,dtype=np.int64)
+  key = np.empty(num_requests,dtype=np.int64)
+  for index, event in enumerate(self.generate()):
+    timestamp[index] = event.timestamp
+    key[index] = event.key
+    return pd.DataFrame({"timestamp": timestamp, "key": key})
