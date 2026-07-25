@@ -45,3 +45,8 @@ def to_pdframe(self) -> pd.DataFrame:
     timestamp[index] = event.timestamp
     key[index] = event.key
     return pd.DataFrame({"timestamp": timestamp, "key": key})
+  
+def save(self,path:Path)->None:
+  path = Path(path)
+  path.parent.mkdir(parents=True,exist_ok=True)
+  self.to_dataframe().to_parquet(path,index=False)
