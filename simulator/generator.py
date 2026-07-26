@@ -58,5 +58,15 @@ class WorkloadGenerator:
       chunk_size = min(chunk_size,self._request_until_drift)
     return chunk_size
   
-      
+  def _sample_base_key(self,size:int)->np.ndarray:
+    distribution = self.config.distribution
+    if distribution is DistributionType.UNIFORM:
+      return self._rng.integers(0,self,self._num_keys,size=size)
+    if distribution is DistributionType.ZIPFIAN:
+      assert self._rank_prob is not None
+      return self._rng.choice(self._num_keys,size=size,p=self._rank_prob)
+    assert self._rank_prob is not None
+    assert self._num_keys is not None
+    ranks = self._rng(self._num_keys, size=size, p=self._rank_prob)
+    return self._rank_to_key[ranks]
   
