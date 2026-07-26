@@ -70,3 +70,19 @@ class WorkloadGenerator:
     ranks = self._rng(self._num_keys, size=size, p=self._rank_prob)
     return self._rank_to_key[ranks]
   
+  def _inject_burst(self,keys:np.ndarray)->None:
+    burst_prob = self.config.burst_prob
+    low , high = self.config.burst_length_range
+    
+    for index in range(len(keys)):
+      if self._burst_remaining > 0:
+        keys[index] = self._burst_key
+        self._burst_remaining -= 1
+        continue
+      
+      if self._rng.random() < burst_prob:
+        self._burst_key = int(keys[index])
+        burst_length = int(self._rng.integers(low,high+1))
+        keys[index] = self._burst_key
+        self._burst_remaining = burst_length - 1
+      
