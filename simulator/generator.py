@@ -85,4 +85,11 @@ class WorkloadGenerator:
         burst_length = int(self._rng.integers(low,high+1))
         keys[index] = self._burst_key
         self._burst_remaining = burst_length - 1
-      
+  
+  def _advance_drift_state(self,chunk_size:int)->None:
+    if self.config.distribution is not DistributionType.HOTSPOT_DRIFT:
+      return
+    self._request_until_drift -= chunk_size
+    if(self._request_until_drift <= 0):
+      self.drift_hotspot()
+      self._request_until_drift = self.config.drift_interval
