@@ -93,3 +93,14 @@ class WorkloadGenerator:
     if(self._request_until_drift <= 0):
       self.drift_hotspot()
       self._request_until_drift = self.config.drift_interval
+      
+  def _drift_hotspot(self)->None:
+    assert self._rank_to_key is not None
+    shift = max(1,round(self.config.drift_friction * self._num_keys))
+    self._rank_to_key = np.roll(self._rank_to_key,shift)
+    
+  @staticmethod
+  def _compute_zipf_prob(num_keys:int , alpha:float)->np.ndarray:
+    ranks = np.arange(1,num_keys+1,dtype=np.float64)
+    weights = ranks ** (-alpha)
+    return weights / weights.sum()
