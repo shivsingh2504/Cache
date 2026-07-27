@@ -23,7 +23,7 @@ class WorkloadGenerator:
     self._burst_enabled : bool = config.burst_prob > 0.0
   
   def generate(self) -> Iterator[AccessEvent]:
-    total_requests = config._num_request
+    total_requests = config.num_request
     produced = 0
     remaining = 0
     while produced < total_requests:
