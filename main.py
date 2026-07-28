@@ -53,7 +53,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Fraction of the key space the hotspot shifts by per drift.",
     )
     parser.add_argument(
-        "--burst-probability",
+        "--burst-prob",
         type=float,
         default=0.0,
         help="Per-request probability of triggering a burst.",
@@ -93,7 +93,7 @@ def build_config(args: argparse.Namespace) -> WorkloadConfig:
         zipf_alpha=args.zipf_alpha,
         drift_interval=args.drift_interval,
         drift_fraction=args.drift_fraction,
-        burst_probability=args.burst_probability,
+        burst_prob=args.burst_prob,
         burst_length_range=(args.burst_length_min, args.burst_length_max),
         seed=args.seed,
     )
@@ -110,8 +110,8 @@ def print_summary(config: WorkloadConfig, output_path: Path) -> None:
     if config.distribution is DistributionType.HOTSPOT_DRIFT:
         print(f"Drift interval:    {config.drift_interval:,}")
         print(f"Drift fraction:    {config.drift_fraction}")
-    if config.burst_probability > 0:
-        print(f"Burst probability: {config.burst_probability}")
+    if config.burst_prob > 0:
+        print(f"Burst probability: {config.burst_prob}")
         print(f"Burst length:      {config.burst_length_range}")
     print(f"Seed:              {config.seed}")
     print(f"Saved to:          {output_path}")

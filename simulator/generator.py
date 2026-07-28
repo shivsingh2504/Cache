@@ -15,30 +15,34 @@ class WorkloadGenerator:
     self._rank_to_key : np.ndarray | None = None
     self._request_until_drift : int = config.drift_interval
     if config.distribution in(DistributionType.ZIPFIAN,DistributionType.HOTSPOT_DRIFT):
-      self._rank_prob = self.compute_zipf_probabilities(num_keys=self._num_keys,alpha=config.zipf_alpha)
+      self._rank_prob = self._compute_zipf_prob(num_keys=self._num_keys,alpha=config.zipf_alpha)
     if config.distribution is DistributionType.HOTSPOT_DRIFT:
       self._rank_to_key = np.arange(self._num_keys)
     self._burst_remaining : int = 0
     self._burst_key : int = 0
-    self._burst_enabled : bool = config.burst_prob > 0.0
+    self._bursts_enabled : bool = config.burst_prob > 0.0
   
   def generate(self) -> Iterator[AccessEvent]:
-    total_requests = config.num_request
+    total_requests = self.config.num_requests
     produced = 0
-    remaining = 0
+    timestamp = 0
+
     while produced < total_requests:
-      remaining = total_requests - produced
-      chunk_size = self._next_chunk_size(remaining)
-      key_chunk = self._sample_base_keys(chunk_size)
-      if self._bursts_enabled:
-        self._inject_bursts(key_chunk)
-      for key in key_chunk:
-        yield AccessEvent(timestamp = timestamp , key = int(key))
-        timestamp+=1
+        remaining = total_requests - produced
+        chunk_size = self._next_chunk_size(remaining)
+        keys_chunk = self._sample_base_keys(chunk_size)
+
+        if self._bursts_enabled:
+            self._inject_bursts(keys_chunk)
+
+        for key in keys_chunk:
+            yield AccessEvent(timestamp=timestamp, key=int(key))
+            timestamp += 1
+
         produced += chunk_size
-      self._advance_drift_state(chunk_size)
+        self._advance_drift_state(chunk_size)
     
-  def to_pdframe(self) -> pd.DataFrame:
+  def to_dataframe(self) -> pd.DataFrame:
     num_requests = self.config.num_requests
     timestamp = np.empty(num_requests,dtype=np.int64)
     key = np.empty(num_requests,dtype=np.int64)
@@ -58,19 +62,19 @@ class WorkloadGenerator:
       chunk_size = min(chunk_size,self._request_until_drift)
     return chunk_size
   
-  def _sample_base_key(self,size:int)->np.ndarray:
+  def _sample_base_keys(self,size:int)->np.ndarray:
     distribution = self.config.distribution
     if distribution is DistributionType.UNIFORM:
-      return self._rng.integers(0,self,self._num_keys,size=size)
+      return self._rng.integers(0,self._num_keys,size=size)
     if distribution is DistributionType.ZIPFIAN:
       assert self._rank_prob is not None
       return self._rng.choice(self._num_keys,size=size,p=self._rank_prob)
     assert self._rank_prob is not None
     assert self._num_keys is not None
-    ranks = self._rng(self._num_keys, size=size, p=self._rank_prob)
+    ranks = self._rng.choice(self._num_keys, size=size, p=self._rank_prob)
     return self._rank_to_key[ranks]
   
-  def _inject_burst(self,keys:np.ndarray)->None:
+  def _inject_bursts(self,keys:np.ndarray)->None:
     burst_prob = self.config.burst_prob
     low , high = self.config.burst_length_range
     
@@ -91,12 +95,12 @@ class WorkloadGenerator:
       return
     self._request_until_drift -= chunk_size
     if(self._request_until_drift <= 0):
-      self.drift_hotspot()
+      self._drift_hotspot()
       self._request_until_drift = self.config.drift_interval
       
   def _drift_hotspot(self)->None:
     assert self._rank_to_key is not None
-    shift = max(1,round(self.config.drift_friction * self._num_keys))
+    shift = max(1,round(self.config.drift_fraction * self._num_keys))
     self._rank_to_key = np.roll(self._rank_to_key,shift)
     
   @staticmethod
