@@ -27,4 +27,26 @@ class FeatureExtractor:
       inter_arrival_time=inter_arrival_time,
       _is_first_access = _is_first_access,
     )
+  
+  def _compute_frequency(self,key:int)->int:
+    return self.state.frequency_of(key)
+  
+  def _compute_recency(self,event:AccessEvent)->int | None:
+    last_seen = self.state.last_access_of(event.key)
+    if last_seen is None:
+      return None
+    return event.timestamp - last_seen
+  
+  def _compute_first_access_time(self,event:AccessEvent)->int:
+    first_seen  = self.state.first_access_of(event.key)
+    return first_seen if first_seen is not None else event.timestamp
+  
+  def _compute_key_age(self,event:AccessEvent,first_access_time:int)->int:
+    return event.timestamp - first_access_time
+  
+  def _compute_inter_arrival_time(self,event:AccessEvent)->int | None:
+    last_event_ts = self.state.last_event_timestamp()
+    if last_event_ts is None:
+      return None
+    return event.timestamp - last_event_ts
     
