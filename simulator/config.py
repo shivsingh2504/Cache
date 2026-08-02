@@ -12,8 +12,8 @@ class DistributionType(Enum):
 
 @dataclass(frozen=True)
 class WorkloadConfig:
-    num_keys: int
-    num_requests: int
+    num_keys: int = 10
+    num_requests: int = 10
     distribution: DistributionType = DistributionType.ZIPFIAN
     zipf_alpha: float = 1.2
     drift_interval: int = 10_000
