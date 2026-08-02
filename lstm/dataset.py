@@ -21,4 +21,14 @@ class CandidatePool:
       return []
     n = min(n,len(pool))
     return rng.sample(pool,n)
+
+
+class LabelGenerator:
+  def __init__(self,horizon:int)->None:
+    self._horizon = horizon
+    
+  def label_for(self,future_keys: list[int],candidate_key:int)->float:
+    window = future_keys[: self._horizon]
+    return float(window.count(candidate_key))
   
+    
