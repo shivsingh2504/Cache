@@ -31,4 +31,22 @@ class LabelGenerator:
     window = future_keys[: self._horizon]
     return float(window.count(candidate_key))
   
+@dataclass
+class TrainingSampleBuilder:
+  dataset_config: DatasetConfig
+  state : CacheState
+  candidate_pool : CandidatePool
+  label_generator : LabelGenerator
+  rng : random.Random
+  
+  def _post_init__(self)->None:
+    self._feature_builder = CandidateFeatureBuilder(self.state)
     
+  def build_sample(self,context:tuple,future_keys : list[int])->list[TrainingSample]:
+    candidates = self.candidate_pool.sample(self.dataset_config.candidate_per_context,self.rng)
+    samples = []
+    for key in candidates:
+      candidate_feature = self._feature_builder.build(key)
+      label = self.label_generator.label_for(future_keys,key)
+      samples.append(TrainingSample(context=context,candidate=candidate_feature,label=label))
+    return samples
