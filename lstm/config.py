@@ -19,3 +19,11 @@ class ModelConfig:
   
   dropout : float = 0.0
   
+@dataclass(frozen=True,slots=True)
+class TrainerConfig:
+  learning_rate : float = 1e-3
+  batch_size : int  = 64
+  num_epochs : int = 20
+  val_split : float = 0.1
+  grad_clip_norm : float | None = 1.0
+  device : str = "cpu"
