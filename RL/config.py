@@ -26,3 +26,8 @@ class TrainerConfig:
   eval_interval : int = 10_000
   log_interval : int = 1_000
   
+  @dataclass
+  class NetworkConfig:
+    cache_capacity : int = 16
+    num_state_features : int = 5
+    hidden_sizes: tuple[int, ...] = (128, 128)
