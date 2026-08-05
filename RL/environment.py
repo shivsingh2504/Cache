@@ -25,7 +25,7 @@ class CacheEvictionEnvironment:
   def _init__(self,config:EnvironmentConfig,popularity_predictor:PopularityPredictor)->None:
     self.config = config
     self.popularity_predictor = popularity_predictor
-    self.workload_generator = self.workload_generator
+    self.workload_generator = workload_generator
     self._cache_state : CacheState | None = None
     self._feature_extractor : FeatureExtractor | None = None
     self._candidate_builder : CandidateFeatureBuilder | None = None
@@ -55,7 +55,7 @@ class CacheEvictionEnvironment:
     state = np.zeros(
       (self.config.cache_capacity,self.config.num_state_features),dtype=np.float32
     )
-    for slot_index,index,key in enumerate(self._slot_keys):
+    for slot_index,key in enumerate(self._slot_keys):
       if key is None:
         state[slot_index,4] = 1.0
         continue
