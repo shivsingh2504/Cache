@@ -1,118 +1,130 @@
-import pickle
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, random_split
 
-from lstm.config import TrainerConfig
-from lstm.model import PopularityPredictor
-from model_input.schema import TrainingSample
-from model_input.tensorizer import candidate_to_array
+from RL.agent import DQNAgent
+from RL.config import TrainerConfig
+from RL.environment import CacheEvictionEnvironment
+from RL.replay_buffer import ReplayBuffer, Transition
 
 
-def inspect_label_distribution(samples: list[TrainingSample]) -> dict[str, float]:
-    labels = torch.tensor([s.label for s in samples], dtype=torch.float32)
-    return {
-        "count": len(labels),
-        "mean": labels.mean().item(),
-        "std": labels.std().item(),
-        "min": labels.min().item(),
-        "max": labels.max().item(),
-        "p50": labels.quantile(0.50).item(),
-        "p90": labels.quantile(0.90).item(),
-        "p99": labels.quantile(0.99).item(),
-        "frac_zero": (labels == 0).float().mean().item(),
-    }
-
-
-class TrainingSampleDataset(Dataset):
-    def __init__(self, samples: list[TrainingSample]) -> None:
-        self.samples = samples
-
-    def __len__(self) -> int:
-        return len(self.samples)
-
-    def __getitem__(self, ind: int) -> TrainingSample:
-        return self.samples[ind]
-
-
-def collate_fn(batch: list[TrainingSample]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    contexts = torch.stack([torch.as_tensor(s.context, dtype=torch.float32) for s in batch])
-    candidates = torch.stack([
-        torch.as_tensor(candidate_to_array(s.candidate), dtype=torch.float32)
-        for s in batch
-    ])
-    labels = torch.tensor([s.label for s in batch], dtype=torch.float32)
-    return contexts, candidates, labels
+@dataclass
+class EvaluationResult:
+    hit_rate: float
+    num_episodes: int
 
 
 class Trainer:
-    def __init__(self, model: PopularityPredictor, config: TrainerConfig) -> None:
-        self.model = model.to(config.device)
+    def __init__(
+        self,
+        config: TrainerConfig,
+        environment: CacheEvictionEnvironment,
+        agent: DQNAgent,
+        replay_buffer: ReplayBuffer,
+        checkpoint_dir: str = "checkpoints",
+    ) -> None:
         self.config = config
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=config.learning_rate)
-        self.loss_fn = nn.MSELoss()
+        self.environment = environment
+        self.agent = agent
+        self.replay_buffer = replay_buffer
+        self._num_eval_episodes = 5
+        self._last_loss: float | None = None
+        self._checkpoint_dir = Path(checkpoint_dir)
+        self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self._best_hit_rate = -1.0
 
-    def fit(self, samples: list[TrainingSample],
-            checkpoint_path: str | None = "checkpoints/best_model.pt",
-            val_samples_path: str | None = "checkpoints/val_samples.pkl") -> dict[str, list[float]]:
-        dataset = TrainingSampleDataset(samples)
-        val_size = int(len(dataset) * self.config.val_split)
-        train_size = len(dataset) - val_size
-        train_set, val_set = random_split(dataset, [train_size, val_size])
+    def warmup(self) -> None:
+        min_required = max(self.config.warmup_steps, self.replay_buffer.config.batch_size)
 
-        if val_samples_path is not None:
-            val_samples_list = [val_set[i] for i in range(len(val_set))]
-            Path(val_samples_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(val_samples_path, "wb") as f:
-                pickle.dump(val_samples_list, f)
+        self.environment.reset()
+        while len(self.replay_buffer) < min_required:
+            if self.environment.done:
+                self.environment.reset()
 
-        train_loader = DataLoader(train_set, batch_size=self.config.batch_size, shuffle=True, collate_fn=collate_fn)
-        val_loader = DataLoader(val_set, batch_size=self.config.batch_size, shuffle=False, collate_fn=collate_fn)
-        history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
-        best_val_loss = float("inf")
+            state = self.environment.current_state()
+            action = self.agent.select_action(state)
+            transition = self._collect_transition(action)
+            self.replay_buffer.push(transition)
 
-        for epoch in range(self.config.num_epochs):
-            train_loss = self._run_epoch(train_loader, train=True)
-            val_loss = self._run_epoch(val_loader, train=False)
-            history["train_loss"].append(train_loss)
-            history["val_loss"].append(val_loss)
-            print(f"epoch {epoch + 1}/{self.config.num_epochs} "
-                  f"train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
+    def train(self) -> None:
+        self.warmup()
+        self.environment.reset()
 
-            if checkpoint_path is not None and val_loss < best_val_loss:
-                best_val_loss = val_loss
-                Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
-                torch.save(self.model.state_dict(), checkpoint_path)
-                print(f"  -> new best val_loss {val_loss:.4f}, checkpoint saved")
+        for step in range(1, self.config.num_training_steps + 1):
+            if self.environment.done:
+                self.environment.reset()
 
-        return history
+            state = self.environment.current_state()
+            action = self.agent.select_action(state)
+            transition = self._collect_transition(action)
+            self.replay_buffer.push(transition)
 
-    def _run_epoch(self, loader: DataLoader, train: bool) -> float:
-        self.model.train(mode=train)
-        total_loss = 0.0
-        total_examples = 0
+            self._last_loss = self.agent.train_step()
 
-        with torch.set_grad_enabled(train):
-            for contexts, candidates, labels in loader:
-                contexts = contexts.to(self.config.device)
-                candidates = candidates.to(self.config.device)
-                labels = labels.to(self.config.device)
+            if step % self.config.log_interval == 0:
+                self.log(step)
 
-                labels_transformed = torch.log1p(labels)
+            if step % self.config.eval_interval == 0:
+                result = self.evaluate()
+                print(
+                    f"[Eval] step={step} "
+                    f"hit_rate={result.hit_rate:.4f} "
+                    f"epsilon={self.agent.epsilon:.3f}"
+                )
+                if result.hit_rate > self._best_hit_rate:
+                    self._best_hit_rate = result.hit_rate
+                    self.save_checkpoint(step, result.hit_rate)
 
-                predictions = self.model(contexts, candidates)
-                loss = self.loss_fn(predictions, labels_transformed)
+    def evaluate(self) -> EvaluationResult:
+        total_hits = 0
+        total_accesses = 0
 
-                if train:
-                    self.optimizer.zero_grad()
-                    loss.backward()
-                    if self.config.grad_clip_norm is not None:
-                        nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip_norm)
-                    self.optimizer.step()
+        for _ in range(self._num_eval_episodes):
+            self.environment.reset()
+            last_info: dict = {"num_hits": 0, "num_misses": 0}
 
-                batch_size = labels.size(0)
-                total_loss += loss.item() * batch_size
-                total_examples += batch_size
-        return total_loss / total_examples
+            while not self.environment.done:
+                state = self.environment.current_state()
+                action = self.agent.select_action(state, greedy=True)
+                result = self.environment.step(action)
+                last_info = result.info
+
+            total_hits += last_info["num_hits"]
+            total_accesses += last_info["num_hits"] + last_info["num_misses"]
+
+        hit_rate = total_hits / total_accesses if total_accesses > 0 else 0.0
+        return EvaluationResult(hit_rate=hit_rate, num_episodes=self._num_eval_episodes)
+
+    def log(self, step: int) -> None:
+        loss_str = f"{self._last_loss:.4f}" if self._last_loss is not None else "n/a"
+        print(
+            f"step {step}/{self.config.num_training_steps} "
+            f"loss={loss_str} "
+            f"epsilon={self.agent.epsilon:.3f} "
+            f"buffer_size={len(self.replay_buffer)}"
+        )
+
+    def save_checkpoint(self, step: int, hit_rate: float) -> None:
+        path = self._checkpoint_dir / "best.pt"
+        torch.save(
+            {
+                "step": step,
+                "hit_rate": hit_rate,
+                "online_state_dict": self.agent.online_network.state_dict(),
+            },
+            path,
+        )
+
+    def _collect_transition(self, action: int) -> Transition:
+        state = self.environment.current_state()
+        result = self.environment.step(action)
+        return Transition(
+            state=state,
+            action=action,
+            reward=result.reward,
+            next_state=result.next_state,
+            done=result.done,
+        )
